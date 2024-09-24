@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"github.com/chushi-io/hc-install/product"
 	"github.com/chushi-io/hc-install/releases"
 	"github.com/chushi-io/hc-install/src"
+	"github.com/chushi-io/timber/adapter"
 	"github.com/hashicorp/go-tfe"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-exec/tfexec"
@@ -29,6 +29,7 @@ func main() {
 	directory := flag.String("directory", "", "The working directory")
 	//parallelism := flag.Int("parallelism", 10, "Threads to run")
 	version := flag.String("version", "latest", "Tofu version to run")
+	logAddress := flag.String("log-address", "", "Endpoint for streaming logs")
 
 	operation := os.Args[1]
 
@@ -43,7 +44,9 @@ func main() {
 		logger.Fatal("failed to install tofu", zap.Error(err))
 	}
 
-	if err = setup(tf, &bytes.Buffer{}); err != nil {
+	logAdapter := adapter.New(*logAddress, os.Getenv("TFE_TOKEN"), fmt.Sprintf("%s/%s.log", "", "plan"))
+
+	if err = setup(tf, logAdapter); err != nil {
 		logger.Fatal("failed to setup execution", zap.Error(err))
 	}
 

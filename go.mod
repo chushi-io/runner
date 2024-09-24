@@ -1,8 +1,6 @@
 module github.com/chushi-io/runner
 
-go 1.22.0
-
-toolchain go1.22.5
+go 1.22.5
 
 require (
 	connectrpc.com/connect v1.17.0
@@ -19,6 +17,7 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/chushi-io/chushi-go-sdk v0.0.0-20240923005237-113cea6867c4 // indirect
 	github.com/chushi-io/hc-install v0.0.0-20240923012423-ccdcff4a3e26 // indirect
+	github.com/chushi-io/timber v0.0.0-20240924005809-66533969b0c7 // indirect
 	github.com/cloudflare/circl v1.3.7 // indirect
 	github.com/go-resty/resty/v2 v2.15.2 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
@@ -31,7 +30,7 @@ require (
 	github.com/hashicorp/jsonapi v1.3.1 // indirect
 	github.com/hashicorp/terraform-json v0.22.1 // indirect
 	github.com/zclconf/go-cty v1.14.4 // indirect
-	go.uber.org/multierr v1.10.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.27.0 // indirect
 	golang.org/x/mod v0.21.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
