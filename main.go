@@ -34,6 +34,8 @@ func main() {
 	version := flag.String("version", "latest", "Tofu version to run")
 	logAddress := flag.String("log-address", "", "Endpoint for streaming logs")
 
+	flag.Parse()
+
 	operation := os.Args[1]
 
 	_, err := chushi.New(tfe.DefaultConfig())
