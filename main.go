@@ -42,6 +42,7 @@ func main() {
 	}
 	ctx := context.Background()
 
+	logger.Info("installing tofu", zap.String("directory", *directory))
 	tf, err := ensureTofu(*directory, *version)
 	if err != nil {
 		logger.Fatal("failed to install tofu", zap.Error(err))
