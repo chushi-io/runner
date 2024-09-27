@@ -21,6 +21,8 @@ import (
 
 var logger *zap.Logger
 
+var DEFAULT_TOFU_VERSION = "1.8.2"
+
 func init() {
 	logger, _ = zap.NewProduction()
 }
@@ -67,20 +69,17 @@ func main() {
 func ensureTofu(workingDirectory string, tofuVersion string) (*tfexec.Terraform, error) {
 	installer := install.NewInstaller()
 
-	var source src.Source
-	if tofuVersion == "latest" {
-		source = &releases.LatestVersion{
-			Product: product.Tofu,
-		}
-	} else {
-		v, err := version.NewVersion(tofuVersion)
-		if err != nil {
-			return nil, err
-		}
-		source = &releases.ExactVersion{
-			Version: v,
-			Product: product.Tofu,
-		}
+	if tofuVersion == "latest" || tofuVersion == "" {
+		tofuVersion = DEFAULT_TOFU_VERSION
+	}
+
+	v, err := version.NewVersion(tofuVersion)
+	if err != nil {
+		return nil, err
+	}
+	source := &releases.ExactVersion{
+		Version: v,
+		Product: product.Tofu,
 	}
 
 	installation, err := installer.Ensure(context.TODO(), []src.Source{source})
