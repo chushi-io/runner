@@ -3,8 +3,8 @@ module github.com/chushi-io/runner
 go 1.22.5
 
 require (
-	github.com/chushi-io/chushi-go-sdk v0.0.0-20240923005237-113cea6867c4
-	github.com/chushi-io/hc-install v0.0.0-20240923012423-ccdcff4a3e26
+	github.com/chushi-io/chushi-go-sdk v0.0.0-20240927014834-242553214634
+	github.com/chushi-io/hc-install v0.0.0-20240927015831-566b2a44aa7a
 	github.com/chushi-io/timber v0.0.0-20240924005809-66533969b0c7
 	github.com/hashicorp/go-tfe v1.66.0
 	github.com/hashicorp/go-version v1.7.0
