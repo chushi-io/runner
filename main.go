@@ -52,7 +52,7 @@ func main() {
 
 	logAdapter := adapter.New(*logAddress, os.Getenv("TFE_TOKEN"), fmt.Sprintf("%s/%s.log", "", "plan"))
 
-	if err = setup(tf, logAdapter); err != nil {
+	if err = setup(tf, io.MultiWriter(logAdapter, os.Stdout)); err != nil {
 		logger.Fatal("failed to setup execution", zap.Error(err))
 	}
 
