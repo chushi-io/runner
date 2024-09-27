@@ -1,21 +1,22 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/chushi-io/chushi-go-sdk"
-	install "github.com/chushi-io/hc-install"
-	"github.com/chushi-io/hc-install/product"
-	"github.com/chushi-io/hc-install/releases"
-	"github.com/chushi-io/hc-install/src"
 	"github.com/chushi-io/timber/adapter"
 	"github.com/hashicorp/go-tfe"
-	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-exec/tfexec"
 	"go.uber.org/zap"
 	"io"
+	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -67,26 +68,16 @@ func main() {
 }
 
 func ensureTofu(workingDirectory string, tofuVersion string) (*tfexec.Terraform, error) {
-	installer := install.NewInstaller()
-
 	if tofuVersion == "latest" || tofuVersion == "" {
 		tofuVersion = DEFAULT_TOFU_VERSION
 	}
 
-	v, err := version.NewVersion(tofuVersion)
+	execPath, err := installBinary(tofuVersion)
 	if err != nil {
 		return nil, err
-	}
-	source := &releases.ExactVersion{
-		Version: v,
-		Product: product.Tofu,
 	}
 
-	installation, err := installer.Ensure(context.TODO(), []src.Source{source})
-	if err != nil {
-		return nil, err
-	}
-	return tfexec.NewTerraform(workingDirectory, installation)
+	return tfexec.NewTerraform(workingDirectory, execPath)
 }
 
 func setup(tf *tfexec.Terraform, output io.Writer) error {
@@ -134,4 +125,68 @@ func opPlan(ctx context.Context, tf *tfexec.Terraform) error {
 	// Convert the JSON plan
 	// Update the plan status
 	return nil
+}
+
+func installBinary(tofuVersion string) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	arch := "amd64"
+	if runtime.GOARCH == "arm" {
+		arch = "arm64"
+	}
+	binaryUrl := fmt.Sprintf(
+		"https://github.com/opentofu/opentofu/releases/download/v%s/tofu_%s_%s_%s.tar.gz",
+		tofuVersion,
+		tofuVersion,
+		runtime.GOOS,
+		arch,
+	)
+	resp, err := http.Get(binaryUrl)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+	gzr, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	defer gzr.Close()
+	tr := tar.NewReader(gzr)
+	for {
+		header, err := tr.Next()
+
+		switch {
+
+		// if no more files are found return
+		case err == io.EOF:
+			return "", errors.New("failed to find tofu binary in archive")
+
+		// return any other error
+		case err != nil:
+			return "", err
+
+		// if the header is nil, just skip it (not sure how this happens)
+		case header == nil:
+			continue
+		}
+
+		if header.Name == "tofu" {
+			outfile, err := os.Create("tofu")
+			if err != nil {
+				return "", err
+			}
+			defer outfile.Close()
+			if _, err := io.Copy(outfile, tr); err != nil {
+				return "", err
+			}
+
+			if err := os.Chmod("tofu", os.FileMode(header.Mode)); err != nil {
+				return "", err
+			}
+			return filepath.Join(cwd, "tofu"), nil
+		}
+	}
 }
