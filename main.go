@@ -10,9 +10,10 @@ import (
 	"github.com/chushi-io/chushi-go-sdk"
 	"github.com/chushi-io/timber/adapter"
 	"github.com/hashicorp/go-tfe"
-	"github.com/hashicorp/terraform-exec/tfexec"
+	"github.com/opentofu/tofu-exec/tfexec"
 	"go.uber.org/zap"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,10 +34,11 @@ func main() {
 	//parallelism := flag.Int("parallelism", 10, "Threads to run")
 	version := flag.String("version", "latest", "Tofu version to run")
 	logAddress := flag.String("log-address", "", "Endpoint for streaming logs")
+	runId := flag.String("run-id", "", "ID of the current run")
 
 	flag.Parse()
 
-	operation := os.Args[1]
+	operation := flag.Arg(0)
 
 	_, err := chushi.New(tfe.DefaultConfig())
 	if err != nil {
@@ -50,15 +52,29 @@ func main() {
 		logger.Fatal("failed to install tofu", zap.Error(err))
 	}
 
-	logAdapter := adapter.New(*logAddress, os.Getenv("TFE_TOKEN"), fmt.Sprintf("%s/%s.log", "", "plan"))
+	logAdapter := adapter.New(*logAddress, os.Getenv("TFE_TOKEN"), fmt.Sprintf("%s/%s.log", *runId, "plan.log"))
 
+	logger.Info("setting up execution environment")
 	if err = setup(tf, io.MultiWriter(logAdapter, os.Stdout)); err != nil {
 		logger.Fatal("failed to setup execution", zap.Error(err))
 	}
 
+	defer func() {
+		out, err := os.ReadFile("debug.log")
+		if err != nil {
+			fmt.Println(err)
+		} else {
+			fmt.Println(string(out))
+		}
+	}()
+
+	logger.Info("initializing tofu")
 	if err = tf.Init(ctx, tfexec.Upgrade(false)); err != nil {
+		fmt.Println("Tofu failed to initialize")
+		fmt.Println(err)
 		logger.Fatal("failed to initialize tofu", zap.Error(err))
 	}
+	fmt.Println("Tofu initialized")
 
 	switch operation {
 	case "plan":
@@ -67,7 +83,9 @@ func main() {
 	case "destroy":
 	}
 	// Parse our environment and pass it to the Tofu execution
-
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func ensureTofu(workingDirectory string, tofuVersion string) (*tfexec.Terraform, error) {
@@ -75,6 +93,7 @@ func ensureTofu(workingDirectory string, tofuVersion string) (*tfexec.Terraform,
 		tofuVersion = DEFAULT_TOFU_VERSION
 	}
 
+	logger.Info("found tofu version", zap.String("version", tofuVersion))
 	execPath, err := installBinary(tofuVersion)
 	if err != nil {
 		return nil, err
@@ -97,7 +116,29 @@ func setup(tf *tfexec.Terraform, output io.Writer) error {
 	}
 	tf.SetStdout(output)
 	tf.SetStderr(output)
+
+	f, err := os.Create("debug.log")
+	if err != nil {
+		return err
+	}
+
+	//if err := tf.SetLog("TRACE"); err != nil {
+	//	fmt.Println(err)
+	//}
+	if err := tf.SetLogPath(f.Name()); err != nil {
+		fmt.Println(err)
+	}
+	tf.SetLogger(debugLogger{})
+	if err := tf.SetLogProvider("TRACE"); err != nil {
+		fmt.Println(err)
+	}
 	return nil
+}
+
+type debugLogger struct{}
+
+func (d debugLogger) Printf(format string, v ...interface{}) {
+	fmt.Println(fmt.Sprintf(format, v...))
 }
 
 func opPlan(ctx context.Context, tf *tfexec.Terraform) error {
@@ -146,6 +187,7 @@ func installBinary(tofuVersion string) (string, error) {
 		runtime.GOOS,
 		arch,
 	)
+	logger.Info("downloading tofu archive", zap.String("url", binaryUrl))
 	resp, err := http.Get(binaryUrl)
 	if err != nil {
 		return "", err
