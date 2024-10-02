@@ -35,10 +35,14 @@ func main() {
 	version := flag.String("version", "latest", "Tofu version to run")
 	logAddress := flag.String("log-address", "", "Endpoint for streaming logs")
 	runId := flag.String("run-id", "", "ID of the current run")
-
+	debug := flag.Bool("debug", false, "Log debug statements")
 	flag.Parse()
 
 	operation := flag.Arg(0)
+
+	if *debug {
+		logger, _ = zap.NewDevelopment()
+	}
 
 	_, err := chushi.New(tfe.DefaultConfig())
 	if err != nil {
@@ -52,21 +56,13 @@ func main() {
 		logger.Fatal("failed to install tofu", zap.Error(err))
 	}
 
-	logAdapter := adapter.New(*logAddress, os.Getenv("TFE_TOKEN"), fmt.Sprintf("%s/%s.log", *runId, "plan.log"))
+	logger.Debug("setting up log adapter")
+	logAdapter := adapter.New(*logAddress, os.Getenv("TFE_TOKEN"), fmt.Sprintf("%s_%s.log", *runId, "plan"))
 
 	logger.Info("setting up execution environment")
 	if err = setup(tf, io.MultiWriter(logAdapter, os.Stdout)); err != nil {
 		logger.Fatal("failed to setup execution", zap.Error(err))
 	}
-
-	defer func() {
-		out, err := os.ReadFile("debug.log")
-		if err != nil {
-			fmt.Println(err)
-		} else {
-			fmt.Println(string(out))
-		}
-	}()
 
 	logger.Info("initializing tofu")
 	if err = tf.Init(ctx, tfexec.Upgrade(false)); err != nil {
@@ -117,28 +113,10 @@ func setup(tf *tfexec.Terraform, output io.Writer) error {
 	tf.SetStdout(output)
 	tf.SetStderr(output)
 
-	f, err := os.Create("debug.log")
-	if err != nil {
-		return err
-	}
-
-	//if err := tf.SetLog("TRACE"); err != nil {
-	//	fmt.Println(err)
-	//}
-	if err := tf.SetLogPath(f.Name()); err != nil {
-		fmt.Println(err)
-	}
-	tf.SetLogger(debugLogger{})
 	if err := tf.SetLogProvider("TRACE"); err != nil {
 		fmt.Println(err)
 	}
 	return nil
-}
-
-type debugLogger struct{}
-
-func (d debugLogger) Printf(format string, v ...interface{}) {
-	fmt.Println(fmt.Sprintf(format, v...))
 }
 
 func opPlan(ctx context.Context, tf *tfexec.Terraform) error {

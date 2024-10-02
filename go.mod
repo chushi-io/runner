@@ -6,7 +6,7 @@ replace github.com/opentofu/tofu-exec => github.com/Magnitus-/tofu-exec v0.0.0-2
 
 require (
 	github.com/chushi-io/chushi-go-sdk v0.0.0-20240927014834-242553214634
-	github.com/chushi-io/timber v0.0.0-20241001012447-7f13ed83fb5a
+	github.com/chushi-io/timber v0.0.0-20241002013409-5ce57ace60ac
 	github.com/hashicorp/go-tfe v1.66.0
 	github.com/opentofu/tofu-exec v0.0.0-00010101000000-000000000000
 	go.uber.org/zap v1.27.0
