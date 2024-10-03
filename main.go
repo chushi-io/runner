@@ -29,6 +29,12 @@ func init() {
 	logger, _ = zap.NewProduction()
 }
 
+var (
+	planOnly bool
+	targets  string
+	destroy  bool
+)
+
 func main() {
 	directory := flag.String("directory", "", "The working directory")
 	//parallelism := flag.Int("parallelism", 10, "Threads to run")
@@ -36,6 +42,12 @@ func main() {
 	logAddress := flag.String("log-address", "", "Endpoint for streaming logs")
 	runId := flag.String("run-id", "", "ID of the current run")
 	debug := flag.Bool("debug", false, "Log debug statements")
+
+	// Operation specific flags, these are bound to vars
+	flag.BoolVar(&planOnly, "plan-only", false, "Only run a plan operation")
+	flag.StringVar(&targets, "targets", "", "Target addresses")
+	flag.BoolVar(&destroy, "destroy", false, "Run destroy operation")
+
 	flag.Parse()
 
 	operation := flag.Arg(0)
@@ -119,21 +131,18 @@ func setup(tf *tfexec.Terraform, output io.Writer) error {
 }
 
 func opPlan(ctx context.Context, tf *tfexec.Terraform) error {
-	planOnly := flag.Bool("plan-only", false, "Only run a plan operation")
-	// This is hacky. We'll want to move to a full list of string slices
-	targets := flag.String("targets", "", "Target addresses")
-	destroy := flag.Bool("destroy", false, "Run destroy operation")
+
 	opts := []tfexec.PlanOption{
 		tfexec.Out("tfplan"),
 	}
-	if *planOnly {
+	if planOnly {
 		opts = append(opts, tfexec.Lock(false))
 	}
-	if *destroy {
+	if destroy {
 		opts = append(opts, tfexec.Destroy(true))
 	}
-	if *targets != "" {
-		targetAddrs := strings.Split(*targets, ",")
+	if targets != "" {
+		targetAddrs := strings.Split(targets, ",")
 		for _, targetAddr := range targetAddrs {
 			opts = append(opts, tfexec.Target(targetAddr))
 		}
