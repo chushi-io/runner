@@ -5,7 +5,7 @@ go 1.22.5
 replace github.com/opentofu/tofu-exec => github.com/Magnitus-/tofu-exec v0.0.0-20231020041209-c1eb82960af7
 
 require (
-	github.com/chushi-io/chushi-go-sdk v0.0.0-20240927014834-242553214634
+	github.com/chushi-io/chushi-go-sdk v0.0.0-20241003002455-1c45ff115672
 	github.com/chushi-io/timber v0.0.0-20241002013409-5ce57ace60ac
 	github.com/hashicorp/go-tfe v1.66.0
 	github.com/opentofu/tofu-exec v0.0.0-00010101000000-000000000000

@@ -76,7 +76,6 @@ func main() {
 	case "plan":
 		err = opPlan(ctx, tf)
 	case "apply":
-	case "destroy":
 	}
 	// Parse our environment and pass it to the Tofu execution
 	if err != nil {
@@ -123,11 +122,15 @@ func opPlan(ctx context.Context, tf *tfexec.Terraform) error {
 	planOnly := flag.Bool("plan-only", false, "Only run a plan operation")
 	// This is hacky. We'll want to move to a full list of string slices
 	targets := flag.String("targets", "", "Target addresses")
+	destroy := flag.Bool("destroy", false, "Run destroy operation")
 	opts := []tfexec.PlanOption{
 		tfexec.Out("tfplan"),
 	}
 	if *planOnly {
 		opts = append(opts, tfexec.Lock(false))
+	}
+	if *destroy {
+		opts = append(opts, tfexec.Destroy(true))
 	}
 	if *targets != "" {
 		targetAddrs := strings.Split(*targets, ",")
