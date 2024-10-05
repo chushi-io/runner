@@ -7,9 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/chushi-io/chushi-go-sdk"
 	"github.com/chushi-io/timber/adapter"
-	"github.com/hashicorp/go-tfe"
 	"github.com/opentofu/tofu-exec/tfexec"
 	"go.uber.org/zap"
 	"io"
@@ -56,10 +54,6 @@ func main() {
 		logger, _ = zap.NewDevelopment()
 	}
 
-	_, err := chushi.New(tfe.DefaultConfig())
-	if err != nil {
-		logger.Fatal("failed to initialize chushi SDK", zap.Error(err))
-	}
 	ctx := context.Background()
 
 	logger.Info("installing tofu", zap.String("directory", *directory))
@@ -72,7 +66,7 @@ func main() {
 	logAdapter := adapter.New(*logAddress, os.Getenv("TFE_TOKEN"), fmt.Sprintf("%s_%s.log", *runId, "plan"))
 
 	logger.Info("setting up execution environment")
-	if err = setup(tf, io.MultiWriter(logAdapter, os.Stdout)); err != nil {
+	if err = setup(tf); err != nil {
 		logger.Fatal("failed to setup execution", zap.Error(err))
 	}
 
@@ -86,7 +80,7 @@ func main() {
 
 	switch operation {
 	case "plan":
-		err = opPlan(ctx, tf)
+		err = opPlan(ctx, io.MultiWriter(logAdapter, os.Stdout), tf)
 	case "apply":
 	}
 	// Parse our environment and pass it to the Tofu execution
@@ -109,7 +103,7 @@ func ensureTofu(workingDirectory string, tofuVersion string) (*tfexec.Terraform,
 	return tfexec.NewTerraform(workingDirectory, execPath)
 }
 
-func setup(tf *tfexec.Terraform, output io.Writer) error {
+func setup(tf *tfexec.Terraform) error {
 	envs := map[string]string{}
 	for _, envVar := range os.Environ() {
 		chunks := strings.Split(envVar, "=")
@@ -121,8 +115,6 @@ func setup(tf *tfexec.Terraform, output io.Writer) error {
 	if err := tf.SetEnv(envs); err != nil {
 		return err
 	}
-	tf.SetStdout(output)
-	tf.SetStderr(output)
 
 	if err := tf.SetLogProvider("TRACE"); err != nil {
 		fmt.Println(err)
@@ -130,7 +122,7 @@ func setup(tf *tfexec.Terraform, output io.Writer) error {
 	return nil
 }
 
-func opPlan(ctx context.Context, tf *tfexec.Terraform) error {
+func opPlan(ctx context.Context, writer io.Writer, tf *tfexec.Terraform) error {
 
 	opts := []tfexec.PlanOption{
 		tfexec.Out("tfplan"),
@@ -147,7 +139,7 @@ func opPlan(ctx context.Context, tf *tfexec.Terraform) error {
 			opts = append(opts, tfexec.Target(targetAddr))
 		}
 	}
-	hasChanges, err := tf.Plan(ctx, opts...)
+	hasChanges, err := tf.PlanJSON(ctx, writer, opts...)
 	if err != nil {
 		return err
 	}
