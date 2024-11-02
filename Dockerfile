@@ -3,7 +3,6 @@ FROM golang:1.23
 WORKDIR /app
 
 COPY go.mod go.sum ./
-COPY tofu-exec ./tofu-exec
 RUN go mod download
 
 COPY *.go ./

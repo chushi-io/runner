@@ -38,6 +38,7 @@ var (
 	destroy                       bool
 	logUploadUrl                  string
 	hostedPlanUploadUrl           string
+	hostedPlanDownloadUrl         string
 	hostedJsonPlanUploadUrl       string
 	hostedStructuredJsonUploadUrl string
 	redactedJsonUploadurl         string
@@ -57,19 +58,26 @@ func main() {
 	version := flag.String("version", "latest", "Tofu version to run")
 	_ = flag.String("log-stream-url", "", "Endpoint for streaming logs")
 	_ = flag.String("run-id", "", "ID of the current run")
+
 	debug := flag.Bool("debug", false, "Log debug statements")
+	flag.StringVar(&logUploadUrl, "log-upload-url", "", "URL to upload logs to")
 
 	// Operation specific flags, these are bound to vars
+	// Plan flags
 	flag.BoolVar(&planOnly, "plan-only", false, "Only run a plan operation")
 	flag.StringVar(&targets, "targets", "", "Target addresses")
 	flag.BoolVar(&destroy, "destroy", false, "Run destroy operation")
-
 	// Upload URLs
-	flag.StringVar(&logUploadUrl, "log-upload-url", "", "URL to upload logs to")
 	flag.StringVar(&hostedPlanUploadUrl, "hosted-plan-upload-url", "", "URL to upload JSON plan")
 	flag.StringVar(&hostedJsonPlanUploadUrl, "hosted-json-plan-upload-url", "", "URL to upload the plan file")
 	flag.StringVar(&hostedStructuredJsonUploadUrl, "hosted-structured-json-upload-url", "", "URL to upload the structured JSON file")
 	flag.StringVar(&redactedJsonUploadurl, "redacted-json-upload-url", "", "URL to upload redacted JSON output")
+
+	// Apply flags
+	flag.StringVar(&hostedPlanDownloadUrl, "hosted-plan-download-url", "", "URL to download the planfile")
+	// Import flags
+	address := flag.String("address", "", "Address to import")
+	id := flag.String("id", "", "ID of the resource to import")
 
 	flag.Parse()
 
@@ -110,6 +118,12 @@ func main() {
 			logger.Error("failed uploading log flush", zap.Error(logUploadErr))
 		}
 	case "apply":
+		// Download
+		err = opApply(ctx, writer, tf)
+	case "import":
+		err = tf.Import(ctx, *address, *id, []tfexec.ImportOption{}...)
+	case "refresh":
+		err = tf.Refresh(ctx, []tfexec.RefreshCmdOption{}...)
 	}
 	// Parse our environment and pass it to the Tofu execution
 	if err != nil {
@@ -389,4 +403,37 @@ func uploadFileToUrl(client *http.Client, url string, data io.Reader) error {
 	}
 
 	return nil
+}
+
+func opApply(ctx context.Context, writer io.Writer, tf *tfexec.Terraform) error {
+	planFile, err := downloadPlanFile(hostedPlanDownloadUrl)
+	if err != nil {
+		return err
+	}
+	return tf.ApplyJSON(ctx, writer, []tfexec.ApplyOption{
+		tfexec.DirOrPlan(planFile.Name()),
+	}...)
+}
+
+func downloadPlanFile(url string) (*os.File, error) {
+	// Create the file
+	out, err := os.CreateTemp("", "sample")
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the data
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Write the body to file
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }
