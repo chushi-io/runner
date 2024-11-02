@@ -2,12 +2,14 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/chushi-io/timber/adapter"
+	tfjson "github.com/hashicorp/terraform-json"
 	"github.com/opentofu/tofu-exec/tfexec"
 	"go.uber.org/zap"
 	"io"
@@ -17,9 +19,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
-var logger *zap.Logger
+var (
+	logger *zap.Logger
+)
 
 var DEFAULT_TOFU_VERSION = "1.8.2"
 
@@ -28,23 +33,43 @@ func init() {
 }
 
 var (
-	planOnly bool
-	targets  string
-	destroy  bool
+	planOnly                      bool
+	targets                       string
+	destroy                       bool
+	logUploadUrl                  string
+	hostedPlanUploadUrl           string
+	hostedJsonPlanUploadUrl       string
+	hostedStructuredJsonUploadUrl string
+	redactedJsonUploadurl         string
 )
+
+type printferAdapter struct {
+	l *zap.Logger
+}
+
+func (p printferAdapter) Printf(format string, v ...interface{}) {
+	p.l.Info(fmt.Sprintf(format, v...))
+}
 
 func main() {
 	directory := flag.String("directory", "", "The working directory")
 	//parallelism := flag.Int("parallelism", 10, "Threads to run")
 	version := flag.String("version", "latest", "Tofu version to run")
-	logAddress := flag.String("log-address", "", "Endpoint for streaming logs")
-	runId := flag.String("run-id", "", "ID of the current run")
+	_ = flag.String("log-stream-url", "", "Endpoint for streaming logs")
+	_ = flag.String("run-id", "", "ID of the current run")
 	debug := flag.Bool("debug", false, "Log debug statements")
 
 	// Operation specific flags, these are bound to vars
 	flag.BoolVar(&planOnly, "plan-only", false, "Only run a plan operation")
 	flag.StringVar(&targets, "targets", "", "Target addresses")
 	flag.BoolVar(&destroy, "destroy", false, "Run destroy operation")
+
+	// Upload URLs
+	flag.StringVar(&logUploadUrl, "log-upload-url", "", "URL to upload logs to")
+	flag.StringVar(&hostedPlanUploadUrl, "hosted-plan-upload-url", "", "URL to upload JSON plan")
+	flag.StringVar(&hostedJsonPlanUploadUrl, "hosted-json-plan-upload-url", "", "URL to upload the plan file")
+	flag.StringVar(&hostedStructuredJsonUploadUrl, "hosted-structured-json-upload-url", "", "URL to upload the structured JSON file")
+	flag.StringVar(&redactedJsonUploadurl, "redacted-json-upload-url", "", "URL to upload redacted JSON output")
 
 	flag.Parse()
 
@@ -62,25 +87,28 @@ func main() {
 		logger.Fatal("failed to install tofu", zap.Error(err))
 	}
 
+	//tf.SetLogger(printferAdapter{l: logger})
 	logger.Debug("setting up log adapter")
-	logAdapter := adapter.New(*logAddress, os.Getenv("TFE_TOKEN"), fmt.Sprintf("%s_%s.log", *runId, "plan"))
+	logAdapter := &logUploadAdapter{logUploadUrl: logUploadUrl}
+	writer := io.MultiWriter(logAdapter, os.Stdout)
 
-	logger.Info("setting up execution environment")
+	logger.Debug("setting up execution environment")
 	if err = setup(tf); err != nil {
 		logger.Fatal("failed to setup execution", zap.Error(err))
 	}
 
-	logger.Info("initializing tofu")
+	logger.Debug("initializing tofu")
 	if err = tf.Init(ctx, tfexec.Upgrade(false)); err != nil {
-		fmt.Println("Tofu failed to initialize")
-		fmt.Println(err)
 		logger.Fatal("failed to initialize tofu", zap.Error(err))
 	}
-	fmt.Println("Tofu initialized")
+	logger.Debug("tofu initialized")
 
 	switch operation {
 	case "plan":
-		err = opPlan(ctx, io.MultiWriter(logAdapter, os.Stdout), tf)
+		err = opPlan(ctx, writer, tf)
+		if logUploadErr := logAdapter.Flush(); logUploadErr != nil {
+			logger.Error("failed uploading log flush", zap.Error(logUploadErr))
+		}
 	case "apply":
 	}
 	// Parse our environment and pass it to the Tofu execution
@@ -116,14 +144,13 @@ func setup(tf *tfexec.Terraform) error {
 		return err
 	}
 
-	if err := tf.SetLogProvider("TRACE"); err != nil {
-		fmt.Println(err)
-	}
 	return nil
 }
 
 func opPlan(ctx context.Context, writer io.Writer, tf *tfexec.Terraform) error {
+	client := &http.Client{}
 
+	// Mark plan as running
 	opts := []tfexec.PlanOption{
 		tfexec.Out("tfplan"),
 	}
@@ -139,17 +166,89 @@ func opPlan(ctx context.Context, writer io.Writer, tf *tfexec.Terraform) error {
 			opts = append(opts, tfexec.Target(targetAddr))
 		}
 	}
+
 	hasChanges, err := tf.PlanJSON(ctx, writer, opts...)
 	if err != nil {
 		return err
 	}
 
-	if hasChanges {
-		fmt.Println("Changes occured!")
+	if !hasChanges {
+		return nil
 	}
-	// Upload the plan output
-	// Convert the JSON plan
-	// Update the plan status
+
+	// If we don't reset the writers, further commands on our
+	// handle will pipe the output to plan logs, which we don't want
+	tf.SetStdout(io.Discard)
+	tf.SetStderr(os.Stderr)
+
+	// Upload the binary plan file
+	planBinaryFile := filepath.Join(tf.WorkingDir(), "tfplan")
+	// Upload the plan binary file
+	data, err := os.Open(planBinaryFile)
+	if err != nil {
+		return err
+	}
+
+	// Upload the redacted JSON plan file
+	plan, err := tf.ShowPlanFile(ctx, planBinaryFile)
+	if err != nil {
+		return err
+	}
+	marshalledRedactedPlan, err := json.Marshal(plan)
+	if err != nil {
+		return err
+	}
+
+	// Upload the JSON plan
+	providerSchemas, err := tf.ProvidersSchema(context.TODO())
+	if err != nil {
+		return err
+	}
+	jsonPlan := &JSONPlan{
+		ProviderSchemas:       providerSchemas.Schemas,
+		ProviderFormatVersion: providerSchemas.FormatVersion,
+		OutputChanges:         plan.OutputChanges,
+		ResourceChanges:       plan.ResourceChanges,
+		ResourceDrift:         plan.ResourceDrift,
+		RelevantAttributes:    plan.RelevantAttributes,
+	}
+	marshalledJsonPlan, err := json.Marshal(jsonPlan)
+	if err != nil {
+		return err
+	}
+
+	// Upload all of the required files to our server
+	var wg sync.WaitGroup
+
+	// TODO: We probably want to catch the error here
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		logger.Info("uploading plan file")
+		if err = uploadFileToUrl(client, hostedPlanUploadUrl, data); err != nil {
+			logger.Error("failed uploading plan file", zap.Error(err))
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		logger.Info("uploading hosted json file")
+		if err = uploadFileToUrl(client, hostedJsonPlanUploadUrl, bytes.NewReader(marshalledJsonPlan)); err != nil {
+			logger.Error("failed uploading hosted json file", zap.Error(err))
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		logger.Info("uploading redacted json file")
+		if err = uploadFileToUrl(client, redactedJsonUploadurl, bytes.NewReader(marshalledRedactedPlan)); err != nil {
+			logger.Error("failed uploading redacted json file", zap.Error(err))
+		}
+	}()
+
+	wg.Wait()
 	return nil
 }
 
@@ -216,4 +315,78 @@ func installBinary(tofuVersion string) (string, error) {
 			return filepath.Join(cwd, "tofu"), nil
 		}
 	}
+}
+
+type JSONPlan struct {
+	PlanFormatVersion  string                     `json:"plan_format_version"`
+	OutputChanges      map[string]*tfjson.Change  `json:"output_changes"`
+	ResourceChanges    []*tfjson.ResourceChange   `json:"resource_changes"`
+	ResourceDrift      []*tfjson.ResourceChange   `json:"resource_drift"`
+	RelevantAttributes []tfjson.ResourceAttribute `json:"relevant_attributes"`
+
+	ProviderFormatVersion string                            `json:"provider_format_version"`
+	ProviderSchemas       map[string]*tfjson.ProviderSchema `json:"provider_schemas"`
+}
+
+type logUploadAdapter struct {
+	logUploadUrl string
+	lines        [][]byte
+}
+
+func (l *logUploadAdapter) Write(p []byte) (int, error) {
+	l.lines = append(l.lines, p)
+	// Disable streaming for now
+	//if err := l.upload(); err != nil {
+	//	fmt.Println(err)
+	//	return 0, err
+	//}
+	return len(p), nil
+}
+
+func (l *logUploadAdapter) Flush() error {
+	return l.upload()
+}
+
+func (l *logUploadAdapter) upload() error {
+	var buf bytes.Buffer
+	for _, line := range l.lines {
+		buf.Write(line)
+	}
+	req, err := http.NewRequest("PUT", l.logUploadUrl, &buf)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	req.Header.Set("Content-Type", "text/plain")
+	client := &http.Client{}
+
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	if res.StatusCode != http.StatusCreated {
+		return errors.New(fmt.Sprintf("response code: %d", res.StatusCode))
+	}
+
+	return nil
+}
+
+func uploadFileToUrl(client *http.Client, url string, data io.Reader) error {
+	req, err := http.NewRequest("PUT", url, data)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "text/plain")
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	if res.StatusCode != http.StatusCreated {
+		return errors.New(fmt.Sprintf("response code: %d", res.StatusCode))
+	}
+
+	return nil
 }
