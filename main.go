@@ -181,14 +181,15 @@ func opPlan(ctx context.Context, writer io.Writer, tf *tfexec.Terraform) error {
 		}
 	}
 
-	hasChanges, err := tf.PlanJSON(ctx, writer, opts...)
+	_, err := tf.PlanJSON(ctx, writer, opts...)
 	if err != nil {
 		return err
 	}
 
-	if !hasChanges {
-		return nil
-	}
+	// Maybe we don't care if we have changes. We still want to upload several files
+	//if !hasChanges {
+	//	return nil
+	//}
 
 	// If we don't reset the writers, further commands on our
 	// handle will pipe the output to plan logs, which we don't want
