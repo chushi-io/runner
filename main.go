@@ -120,6 +120,9 @@ func main() {
 	case "apply":
 		// Download
 		err = opApply(ctx, writer, tf)
+		if logUploadErr := logAdapter.Flush(); logUploadErr != nil {
+			logger.Error("failed uploading log flush", zap.Error(logUploadErr))
+		}
 	case "import":
 		err = tf.Import(ctx, *address, *id, []tfexec.ImportOption{}...)
 	case "refresh":
